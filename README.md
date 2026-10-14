@@ -1,6 +1,6 @@
 # TRUCK-DRIVING-GAME — Stage 1 prototype
 
-This branch contains a Stage-1 playable web prototype: a basic 3D driving scene with one controllable monster truck, physics, camera follow, simple HUD, and reset functionality.
+This branch contains a Stage-1 playable web prototype and an in-progress Stage-2 vehicle upgrade: improved suspension and wheel behaviour using cannon-es RaycastVehicle.
 
 Run locally
 
@@ -24,18 +24,12 @@ Controls (default mappings — rebinding not yet implemented in UI)
 - R: Reset vehicle orientation
 - C: Toggle camera mode (third / free)
 
-What this prototype includes
-- Three.js renderer, scene, PBR-like materials (basic) and sky
-- cannon-es physics world with gravity
-- A simple monster-truck composed of a chassis box and four wheels using physics constraints
-- Basic tire friction and engine force applied to rear wheels
-- Third-person follow camera with smoothing and collision avoidance
-- Simple HUD with speed and gear indicators
+Notes about Stage 2 changes
+- The vehicle physics implementation has been upgraded to use cannon-es RaycastVehicle for more believable suspension, wheel contact, and steering behaviour.
+- Tuning values (suspension stiffness, damping, frictionSlip, engine force) are intentionally conservative and should be tuned per truck model.
 
 Next recommended steps
-- Improve vehicle suspension with raycast vehicle or more advanced wheel colliders
-- Add a garage, UI, and multiple trucks as prefabs
-- Implement terrain and road network assets
-- Add audio, damage visuals, and optimization for mobile
-
-Note: This prototype targets the Stage 1 deliverable (playable prototype). It deliberately keeps assets and code minimal so you can run immediately in the browser. Later stages will replace the placeholder geometry with high-quality PBR models and add more systems.
+- Tune suspension and friction for each truck archetype.
+- Add per-surface friction modifiers (asphalt vs dirt vs mud) and tire temperature effects.
+- Implement gearbox, downforce, and weight transfer for more mechanical realism.
+- Replace placeholder geometry with production PBR models and normal maps.

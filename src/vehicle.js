@@ -1,4 +1,7 @@
 // src/vehicle.js
+// Replaced simple lock-constraint wheel approximation with a proper RaycastVehicle
+// using cannon-es RaycastVehicle for more realistic suspension and wheel behaviour.
+
 import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
 import * as CANNON from 'https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js';
 
@@ -7,95 +10,128 @@ export class Vehicle{
     this.scene = scene;
     this.world = world;
 
-    // Visual chassis
-    const chassisGeo = new THREE.BoxGeometry(3.5,1.4,6);
-    const chassisMat = new THREE.MeshStandardMaterial({ color:0x222222, metalness:0.3, roughness:0.4 });
+    // Chassis visual
+    const chassisGeo = new THREE.BoxGeometry(3.8,1.6,6.2);
+    const chassisMat = new THREE.MeshStandardMaterial({ color:0x222222, metalness:0.35, roughness:0.45 });
     this.chassisMesh = new THREE.Mesh(chassisGeo, chassisMat);
     this.chassisMesh.castShadow = true;
     scene.add(this.chassisMesh);
 
-    // Physics chassis
-    const chassisShape = new CANNON.Box(new CANNON.Vec3(1.75,0.7,3));
+    // Chassis physics
+    const chassisShape = new CANNON.Box(new CANNON.Vec3(1.9,0.8,3.1));
     this.chassisBody = new CANNON.Body({ mass: 2500 });
     this.chassisBody.addShape(chassisShape);
     this.chassisBody.position.set(0,4,0);
     this.chassisBody.angularDamping = 0.4;
-    world.addBody(this.chassisBody);
+    this.world.addBody(this.chassisBody);
 
-    // Wheels (visual)
-    this.wheelMeshes = [];
-    this.wheelBodies = [];
-    const wheelGeo = new THREE.CylinderGeometry(1.1,1.1,0.8,16);
-    const wheelMat = new THREE.MeshStandardMaterial({ color:0x111111, metalness:0.2, roughness:0.7 });
-    for(let i=0;i<4;i++){
-      const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.rotation.z = Math.PI/2;
-      w.castShadow = true;
-      scene.add(w);
-      this.wheelMeshes.push(w);
+    // Create the vehicle (raycast vehicle)
+    this.vehicle = new CANNON.RaycastVehicle({ chassisBody: this.chassisBody, indexRightAxis: 0, indexUpAxis: 1, indexForwardAxis: 2 });
 
-      const wb = new CANNON.Body({ mass:50, shape: new CANNON.Sphere(0.6) });
-      this.world.addBody(wb);
-      this.wheelBodies.push(wb);
-    }
+    // Wheel options
+    const wheelOptions = {
+      radius: 1.05,
+      directionLocal: new CANNON.Vec3(0,-1,0),
+      suspensionStiffness: 45,
+      suspensionRestLength: 0.55,
+      suspensionRelaxation: 2,
+      dampingCompression: 2.4,
+      dampingRelaxation: 2.4,
+      frictionSlip: 3.5,
+      rollInfluence: 0.02,
+      axleLocal: new CANNON.Vec3(-1,0,0),
+      chassisConnectionPointLocal: new CANNON.Vec3(),
+      maxSuspensionForce: 1e4,
+    };
 
-    // Simple constraints to approximate wheels
-    // Positions relative to chassis
-    this.wheelOffsets = [
-      new CANNON.Vec3(-1.6,-0.9, 2.6), // front-left
-      new CANNON.Vec3( 1.6,-0.9, 2.6), // front-right
-      new CANNON.Vec3(-1.6,-0.9,-2.6), // rear-left
-      new CANNON.Vec3( 1.6,-0.9,-2.6), // rear-right
+    // Wheel connection points (relative to chassis)
+    // front-left, front-right, rear-left, rear-right
+    const halfWidth = 1.7;
+    const halfLength = 2.6;
+    const wheelBaseHeight = -0.9;
+
+    const connectionPoints = [
+      new CANNON.Vec3(-halfWidth, wheelBaseHeight,  halfLength), // front-left (0)
+      new CANNON.Vec3( halfWidth, wheelBaseHeight,  halfLength), // front-right (1)
+      new CANNON.Vec3(-halfWidth, wheelBaseHeight, -halfLength), // rear-left  (2)
+      new CANNON.Vec3( halfWidth, wheelBaseHeight, -halfLength), // rear-right (3)
     ];
 
     for(let i=0;i<4;i++){
-      const wb = this.wheelBodies[i];
-      const worldPoint = this.chassisBody.position.vadd(this.wheelOffsets[i]);
-      wb.position.copy(worldPoint);
-      const constraint = new CANNON.LockConstraint(this.chassisBody, wb);
-      this.world.addConstraint(constraint);
+      const opts = Object.assign({}, wheelOptions);
+      opts.chassisConnectionPointLocal = connectionPoints[i].clone();
+      // slightly stiffer suspension on rear
+      if(i >= 2){ opts.suspensionStiffness = 55; opts.frictionSlip = 3.8; }
+      this.vehicle.addWheel(opts);
     }
 
-    // Driving parameters
+    this.vehicle.addToWorld(this.world);
+
+    // Create visual wheel meshes
+    this.wheelMeshes = [];
+    const wheelGeo = new THREE.CylinderGeometry(wheelOptions.radius, wheelOptions.radius, 0.9, 24);
+    const wheelMat = new THREE.MeshStandardMaterial({ color:0x111111, metalness:0.25, roughness:0.7 });
+    for(let i=0;i<this.vehicle.wheelInfos.length;i++){
+      const wm = new THREE.Mesh(wheelGeo, wheelMat);
+      wm.rotation.z = Math.PI/2; // cylinders in Three have Y axis as up; rotate so the wheel faces forward
+      wm.castShadow = true;
+      wm.receiveShadow = true;
+      this.scene.add(wm);
+      this.wheelMeshes.push(wm);
+    }
+
+    // Driving properties
+    this.maxEngineForce = 22000; // N
     this.engineForce = 0;
-    this.maxEngineForce = 15000;
-    this.steering = 0;
-    this.maxSteer = 0.5; // radians
-    this.brakeForce = 0;
-    this.handbrake = false;
+    this.maxBrakeForce = 12000;
+
+    // Indexes
+    this.frontLeft = 0; this.frontRight = 1; this.rearLeft = 2; this.rearRight = 3;
+
+    // Steering limits
+    this.maxSteerVal = 0.6; // radians (~34deg)
+
+    // Temporary vectors for reuse
+    this.tmpVec3 = new THREE.Vector3();
+
+    // Bind update loop helper
+    this._updateVisuals = this._updateVisuals.bind(this);
   }
 
   applyControls(input, delta){
-    // Throttle
-    const throttle = input.forward ? 1 : (input.backward ? -0.6 : 0);
-    const steer = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    // Throttle and braking
+    const throttle = input.forward ? 1 : 0;
+    const reverse = input.backward ? 1 : 0;
+    const brake = input.brake ? 1 : 0; // keyboard shift = brake
+    const handbrake = input.handbrake ? 1 : 0; // space
 
-    // Simple engine application to rear wheels
-    const speed = this.getSpeedKmh();
-    const speedFactor = Math.max(0, 1 - speed/180);
-    this.engineForce = throttle * this.maxEngineForce * speedFactor;
+    // Build engine force sign
+    const engineSign = throttle - reverse; // forward (1) or reverse (-1)
+    const targetEngine = engineSign * this.maxEngineForce;
+    // simple interpolation for smoother force changes
+    this.engineForce += (targetEngine - this.engineForce) * Math.min(10 * delta, 1);
 
-    // Apply force to chassis in forward direction
-    const forward = this.chassisBody.quaternion.vmult(new CANNON.Vec3(0,0,1));
-    const force = forward.scale(-this.engineForce * delta);
-    this.chassisBody.applyForce(force, this.chassisBody.position);
+    // Apply engine force to rear wheels
+    this.vehicle.applyEngineForce(-this.engineForce, this.rearLeft);
+    this.vehicle.applyEngineForce(-this.engineForce, this.rearRight);
 
-    // Steering torque
-    const steerAngle = steer * this.maxSteer;
-    const yawTorque = steerAngle * 1200;
-    this.chassisBody.torque.y += yawTorque * delta;
+    // Steering
+    const steerInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    const steerVal = steerInput * this.maxSteerVal;
+    this.vehicle.setSteeringValue(steerVal, this.frontLeft);
+    this.vehicle.setSteeringValue(steerVal, this.frontRight);
 
-    // Braking
-    if(input.brake){
-      // apply damping
-      const vel = this.chassisBody.velocity;
-      this.chassisBody.velocity.scale(0.98, this.chassisBody.velocity);
+    // Brakes
+    const brakeForce = (brake ? this.maxBrakeForce : 0) + (handbrake ? this.maxBrakeForce*0.6 : 0);
+    // Apply braking to all wheels when braking; handbrake adds extra to rear wheels
+    for(let i=0;i<this.vehicle.wheelInfos.length;i++){
+      this.vehicle.setBrake(brakeForce, i);
     }
 
-    // Handbrake
-    if(input.handbrake){
-      this.chassisBody.velocity.x *= 0.95;
-      this.chassisBody.velocity.z *= 0.95;
+    if(handbrake){
+      // stronger on rear wheels
+      this.vehicle.setBrake(this.maxBrakeForce*1.5, this.rearLeft);
+      this.vehicle.setBrake(this.maxBrakeForce*1.5, this.rearRight);
     }
 
     // Reset
@@ -103,8 +139,8 @@ export class Vehicle{
       this.resetPosition();
     }
 
-    // Sync visuals to physics
-    this.syncVisuals();
+    // Update visuals so the camera and HUD show smooth state
+    this._updateVisuals();
   }
 
   getSpeedKmh(){
@@ -113,26 +149,44 @@ export class Vehicle{
   }
 
   resetPosition(){
+    // Lift slightly and zero velocities
     this.chassisBody.position.set(0,6,0);
+    this.chassisBody.quaternion.set(0,0,0,1);
     this.chassisBody.velocity.set(0,0,0);
     this.chassisBody.angularVelocity.set(0,0,0);
-    this.chassisBody.quaternion.set(0,0,0,1);
+    // remove wheel impulses if any
+    for(let i=0;i<this.vehicle.wheelInfos.length;i++){
+      this.vehicle.wheelInfos[i].rotation = 0;
+      this.vehicle.wheelInfos[i].deltaRotation = 0;
+    }
   }
 
   updateFromPhysics(){
-    this.syncVisuals();
+    // Called each physics step to sync visuals
+    this._updateVisuals();
   }
 
-  syncVisuals(){
-    // chassis
+  _updateVisuals(){
+    // Chassis visual
     this.chassisMesh.position.copy(this.chassisBody.position);
     this.chassisMesh.quaternion.copy(this.chassisBody.quaternion);
 
-    // wheels
-    for(let i=0;i<4;i++){
-      const offset = this.wheelOffsets[i];
-      const worldPoint = this.chassisBody.pointToWorldFrame(offset);
-      this.wheelMeshes[i].position.set(worldPoint.x, worldPoint.y, worldPoint.z);
+    // Wheels
+    for(let i=0;i<this.vehicle.wheelInfos.length;i++){
+      this.vehicle.updateWheelTransform(i);
+      const t = this.vehicle.wheelInfos[i].worldTransform; // has position and quaternion
+      const pos = t.position;
+      const quat = t.quaternion;
+      const wm = this.wheelMeshes[i];
+      wm.position.set(pos.x, pos.y, pos.z);
+      wm.quaternion.set(quat.x, quat.y, quat.z, quat.w);
+
+      // Cylinder geometry faces +Y by default in Three; we've rotated it so wheel forward axis matches.
+      // We can also add visual rotation for rolling based on wheelInfo.rotation
+      const wheelInfo = this.vehicle.wheelInfos[i];
+      // wheelInfo.rotation is the rotation around axle (radians)
+      wm.rotateX(wheelInfo.rotation - (wm.userRotation || 0));
+      wm.userRotation = wheelInfo.rotation;
     }
   }
 }
