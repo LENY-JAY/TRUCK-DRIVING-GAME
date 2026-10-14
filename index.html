@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Truck Driving Game — Prototype</title>
+    <style>
+      html,body{height:100%;margin:0}
+      canvas{display:block}
+      #hud{position:fixed;left:12px;bottom:12px;color:#fff;font-family:Inter,Arial;background:rgba(0,0,0,0.25);padding:8px;border-radius:6px}
+      #overlay{position:fixed;right:12px;top:12px;color:#fff;font-family:Inter,Arial;background:rgba(0,0,0,0.2);padding:8px;border-radius:6px}
+    </style>
+  </head>
+  <body>
+    <div id="hud">Speed: <span id="speed">0</span> km/h</div>
+    <div id="overlay">WASD or Arrow keys — Space: handbrake — R: reset</div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
